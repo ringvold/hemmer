@@ -1,0 +1,14 @@
+[package]
+name = "hemmer"
+version = "0.1.0"
+edition = "2024"
+description = "Rust-powered email HTML transformation pipeline"
+license = "MIT"
+
+[dependencies]
+css-inline = "0.14"
+encre-css = "0.20"
+lol_html = "2.1"
+lightningcss = "1.0.0-alpha.71"
+minify-html = "0.15"
+thiserror = "2"
