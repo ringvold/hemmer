@@ -1,6 +1,6 @@
 mod error;
 mod pipeline;
-mod transformers;
+pub mod transformers;
 
 pub use error::Error;
 pub use pipeline::{Pipeline, PipelineResult};

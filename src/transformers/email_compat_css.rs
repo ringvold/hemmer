@@ -4,15 +4,27 @@ use lol_html::{element, rewrite_str, RewriteStrSettings};
 /// Base pixel size for rem conversion (matches browser default).
 const REM_BASE: f64 = 16.0;
 
-/// Convert CSS in inline `style` attributes to be email-client compatible.
+/// Convert CSS to be email-client compatible.
 ///
-/// Transforms:
+/// Transforms in inline `style` attributes:
 /// - `rem` units → `px` (Outlook doesn't support rem)
 /// - CSS logical properties → physical equivalents (no email client supports these)
 /// - `gap` → removed (not supported; spacing should use padding/margin)
+///
+/// Transforms across the whole document (so it picks up `<style>` blocks too):
+/// - Modern `@media (width >= X)` range syntax → legacy `(min-width: X)`
+/// - Modern `@media (width < X)` range syntax → legacy `(max-width: X-1px)`
+/// - Same for `height` queries
+/// - `rem` units in media query values → `px`
 pub fn process(html: &str) -> Result<String, Error> {
+    // 1. Convert media query syntax across the whole document.
+    //    @media only appears inside <style> tags or @-rule contexts, never
+    //    in HTML attributes, so a simple string scan is safe.
+    let html = convert_media_queries(html);
+
+    // 2. Walk inline style attributes for rem/logical-property conversion.
     rewrite_str(
-        html,
+        html.as_str(),
         RewriteStrSettings {
             element_content_handlers: vec![element!("[style]", |el| {
                 if let Some(style) = el.get_attribute("style") {
@@ -28,6 +40,114 @@ pub fn process(html: &str) -> Result<String, Error> {
         },
     )
     .map_err(|e| Error::HtmlRewrite(e.to_string()))
+}
+
+/// Convert modern CSS Media Queries Level 4 range syntax to legacy
+/// `min-width:` / `max-width:` form for email-client compatibility.
+///
+/// Also converts `rem` values inside media queries to `px`.
+fn convert_media_queries(css: &str) -> String {
+    let mut result = String::with_capacity(css.len());
+    let mut remaining = css;
+
+    while let Some(at_idx) = remaining.find("@media") {
+        result.push_str(&remaining[..at_idx]);
+        let after_at = &remaining[at_idx..];
+
+        // Find the end of the @media query (the `{` that opens the block,
+        // or end of string)
+        let media_end = after_at.find('{').unwrap_or(after_at.len());
+        let media_part = &after_at[..media_end];
+
+        let converted = convert_media_query_conditions(media_part);
+        result.push_str(&converted);
+
+        remaining = &after_at[media_end..];
+    }
+
+    result.push_str(remaining);
+    result
+}
+
+/// Convert range conditions inside a single `@media ...` prelude.
+fn convert_media_query_conditions(media: &str) -> String {
+    // Walk through and find `(<feature> <op> <value>)` patterns.
+    // We need to handle: width, height, max-width, min-width (passthrough), etc.
+    let mut result = String::with_capacity(media.len());
+    let mut remaining = media;
+
+    while let Some(open) = remaining.find('(') {
+        result.push_str(&remaining[..open + 1]);
+        let after_open = &remaining[open + 1..];
+
+        let Some(close) = after_open.find(')') else {
+            result.push_str(after_open);
+            return result;
+        };
+
+        let inside = &after_open[..close];
+        let converted_inside = convert_range_condition(inside);
+        result.push_str(&converted_inside);
+        result.push(')');
+
+        remaining = &after_open[close + 1..];
+    }
+
+    result.push_str(remaining);
+    result
+}
+
+/// Convert a single condition string (without parens) like "width >= 600px"
+/// into "min-width: 600px". Pass through unrecognized syntax unchanged.
+fn convert_range_condition(condition: &str) -> String {
+    let trimmed = condition.trim();
+
+    // Try each operator from longest to shortest to avoid `<` matching `<=`
+    for op in [">=", "<=", ">", "<"] {
+        if let Some((feature, value)) = trimmed.split_once(op) {
+            let feature = feature.trim();
+            let value = convert_rem_to_px(value.trim());
+
+            // Only convert known features
+            let prop = match feature {
+                "width" | "height" => feature,
+                _ => return condition.to_string(),
+            };
+
+            return match op {
+                ">=" => format!("min-{prop}: {value}"),
+                "<=" => format!("max-{prop}: {value}"),
+                ">" => {
+                    // Strictly greater → min-width: value + 1px
+                    let bumped = bump_px(&value, 1);
+                    format!("min-{prop}: {bumped}")
+                }
+                "<" => {
+                    // Strictly less → max-width: value - 1px
+                    let bumped = bump_px(&value, -1);
+                    format!("max-{prop}: {bumped}")
+                }
+                _ => unreachable!(),
+            };
+        }
+    }
+
+    // No range operator — pass through (handles legacy `min-width: 600px` etc.)
+    condition.to_string()
+}
+
+/// Add or subtract pixels from a CSS length value. Only works on `px` values;
+/// other units are returned unchanged.
+fn bump_px(value: &str, delta: i64) -> String {
+    if let Some(num_str) = value.strip_suffix("px") {
+        if let Ok(n) = num_str.trim().parse::<i64>() {
+            return format!("{}px", n + delta);
+        }
+        if let Ok(n) = num_str.trim().parse::<f64>() {
+            return format!("{}px", (n + delta as f64) as i64);
+        }
+    }
+    value.to_string()
 }
 
 fn convert_style(style: &str) -> String {
@@ -284,5 +404,95 @@ mod tests {
         assert!(result.contains("padding-right: 24px"));
         assert!(result.contains("font-size: 14px"));
         assert!(!result.contains("rem"));
+    }
+
+    // ─── Media query range syntax conversion ──────────────────
+
+    #[test]
+    fn test_width_gte_to_min_width() {
+        assert_eq!(
+            convert_media_queries("@media (width >= 600px)"),
+            "@media (min-width: 600px)"
+        );
+    }
+
+    #[test]
+    fn test_width_lte_to_max_width() {
+        assert_eq!(
+            convert_media_queries("@media (width <= 600px)"),
+            "@media (max-width: 600px)"
+        );
+    }
+
+    #[test]
+    fn test_width_lt_to_max_width_minus_one() {
+        // (width < 600px) means strictly less than 600 → max-width: 599px
+        assert_eq!(
+            convert_media_queries("@media (width < 600px)"),
+            "@media (max-width: 599px)"
+        );
+    }
+
+    #[test]
+    fn test_width_gt_to_min_width_plus_one() {
+        // (width > 600px) means strictly more than 600 → min-width: 601px
+        assert_eq!(
+            convert_media_queries("@media (width > 600px)"),
+            "@media (min-width: 601px)"
+        );
+    }
+
+    #[test]
+    fn test_height_range() {
+        assert_eq!(
+            convert_media_queries("@media (height >= 400px)"),
+            "@media (min-height: 400px)"
+        );
+        assert_eq!(
+            convert_media_queries("@media (height < 800px)"),
+            "@media (max-height: 799px)"
+        );
+    }
+
+    #[test]
+    fn test_legacy_syntax_unchanged() {
+        // Already-legacy syntax should pass through unchanged
+        assert_eq!(
+            convert_media_queries("@media (min-width: 600px)"),
+            "@media (min-width: 600px)"
+        );
+        assert_eq!(
+            convert_media_queries("@media (max-width: 599px)"),
+            "@media (max-width: 599px)"
+        );
+    }
+
+    #[test]
+    fn test_full_style_block() {
+        let html = r#"<style>
+            @media (width >= 600px) {
+                .desktop { display: block; }
+            }
+            @media (width < 600px) {
+                .mobile { display: block; }
+            }
+        </style>"#;
+        let result = process(html).unwrap();
+        assert!(result.contains("(min-width: 600px)"));
+        assert!(result.contains("(max-width: 599px)"));
+        assert!(!result.contains("width >="));
+        assert!(!result.contains("width <"));
+    }
+
+    #[test]
+    fn test_multiple_media_queries_in_style() {
+        let html = r#"<style>
+            @media (width >= 40rem) { .a { color: red; } }
+            @media (width >= 64rem) { .b { color: blue; } }
+        </style>"#;
+        let result = process(html).unwrap();
+        // Should also convert rem in media queries
+        assert!(result.contains("(min-width: 640px)"));
+        assert!(result.contains("(min-width: 1024px)"));
     }
 }

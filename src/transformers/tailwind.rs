@@ -233,3 +233,159 @@ pub fn email_config() -> encre_css::Config {
 
     config
 }
+
+/// Apply dark-mode auto-inversion protection to a config.
+///
+/// Some email clients (notably Gmail and Apple Mail) automatically invert
+/// "pure" black and white when the user is in dark mode. This can break
+/// carefully designed emails: a white background flips to black but the
+/// rest of your colors don't, leaving the design inconsistent.
+///
+/// This helper overrides Tailwind's `black` and `white` color values with
+/// near-pure equivalents that the auto-inversion algorithm doesn't
+/// recognize as "pure" — visually identical to humans, but the dark mode
+/// detector skips them and your design renders as you intended.
+///
+/// **Note:** This intentionally fights the user's dark mode preference.
+/// Use it for transactional emails where design fidelity matters; consider
+/// leaving it off for content emails where dark mode adaptation is fine.
+///
+/// ```
+/// let mut config = hemmer::tailwind_email_config();
+/// hemmer::transformers::tailwind::add_dark_mode_protection(&mut config);
+/// ```
+pub fn add_dark_mode_protection(config: &mut encre_css::Config) {
+    config.theme.colors.add("black", "#000001");
+    config.theme.colors.add("white", "#fffffe");
+}
+
+/// Add email-friendly screen breakpoints (`sm` and `xs`) to a config.
+///
+/// Adds:
+/// - `sm` = 600px (the email industry standard mobile breakpoint)
+/// - `xs` = 430px (smaller phones)
+///
+/// Use them with the `max-` prefix variant to get max-width semantics
+/// (the desktop-first responsive approach typical for emails):
+///
+/// ```text
+/// <div class="text-base max-sm:text-sm">Responsive text</div>
+/// ```
+///
+/// **Note:** encre-css generates the modern CSS range query syntax
+/// (`@media (width < 600px)`). For maximum email-client compatibility you
+/// may want to post-process the output to use legacy `(max-width: 600px)`
+/// syntax — see `email_compat_css` for the wider compatibility-fix layer.
+///
+/// ```
+/// let mut config = hemmer::tailwind_email_config();
+/// hemmer::transformers::tailwind::add_email_screens(&mut config);
+/// ```
+pub fn add_email_screens(config: &mut encre_css::Config) {
+    config.theme.screens.add("sm", "600px");
+    config.theme.screens.add("xs", "430px");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn generate(html: &str, config: &encre_css::Config) -> String {
+        encre_css::generate([html], config)
+    }
+
+    // ─── Default email_config sanity checks ────────────────────
+
+    #[test]
+    fn test_email_config_uses_hex_colors() {
+        let config = email_config();
+        let css = generate(r#"<div class="bg-indigo-600">x</div>"#, &config);
+        assert!(css.contains("#4f46e5"), "should use hex, got: {css}");
+        assert!(!css.contains("oklch"), "should not contain oklch");
+    }
+
+    #[test]
+    fn test_email_config_no_preflight() {
+        let config = email_config();
+        let css = generate(r#"<div class="text-sm">x</div>"#, &config);
+        // Preflight would inject reset CSS at the top — we should not see it
+        assert!(!css.contains("box-sizing: border-box"));
+    }
+
+    // ─── Dark mode protection (opt-in) ─────────────────────────
+
+    #[test]
+    fn test_dark_mode_protection_changes_black() {
+        let mut config = email_config();
+        add_dark_mode_protection(&mut config);
+        let css = generate(r#"<div class="text-black">x</div>"#, &config);
+        assert!(css.contains("#000001"), "expected #000001, got: {css}");
+        // Should NOT contain pure #000 or #000000
+        assert!(!css.contains("#000;") && !css.contains("#000000"));
+    }
+
+    #[test]
+    fn test_dark_mode_protection_changes_white() {
+        let mut config = email_config();
+        add_dark_mode_protection(&mut config);
+        let css = generate(r#"<div class="bg-white">x</div>"#, &config);
+        assert!(css.contains("#fffffe"), "expected #fffffe, got: {css}");
+        assert!(!css.contains("#fff;") && !css.contains("#ffffff;"));
+    }
+
+    #[test]
+    fn test_dark_mode_protection_not_applied_by_default() {
+        // Without the helper, encre-css uses its default black/white
+        let config = email_config();
+        let css = generate(r#"<div class="text-black bg-white">x</div>"#, &config);
+        // The default should NOT contain our trick values
+        assert!(!css.contains("#000001"));
+        assert!(!css.contains("#fffffe"));
+    }
+
+    // ─── Email screens (opt-in) ────────────────────────────────
+
+    #[test]
+    fn test_email_screens_sm_value() {
+        let mut config = email_config();
+        add_email_screens(&mut config);
+        // Use max-sm: which produces a max-width media query in encre-css
+        let css = generate(r#"<div class="max-sm:text-sm">x</div>"#, &config);
+        // The screen value 600px should appear in a media query
+        assert!(css.contains("600px"), "expected 600px breakpoint, got: {css}");
+        assert!(css.contains("@media"), "expected media query, got: {css}");
+    }
+
+    #[test]
+    fn test_email_screens_xs_value() {
+        let mut config = email_config();
+        add_email_screens(&mut config);
+        let css = generate(r#"<div class="max-xs:text-xs">x</div>"#, &config);
+        assert!(css.contains("430px"), "expected 430px breakpoint, got: {css}");
+    }
+
+    #[test]
+    fn test_email_screens_not_applied_by_default() {
+        // Without the helper, encre-css uses Tailwind's default 40rem (640px) for sm
+        let config = email_config();
+        let css = generate(r#"<div class="max-sm:text-sm">x</div>"#, &config);
+        // Default sm is 40rem, NOT 600px
+        assert!(!css.contains("600px"));
+    }
+
+    #[test]
+    fn test_helpers_can_be_combined() {
+        let mut config = email_config();
+        add_dark_mode_protection(&mut config);
+        add_email_screens(&mut config);
+
+        let css = generate(
+            r#"<div class="text-black max-sm:bg-white">x</div>"#,
+            &config,
+        );
+        // Both helpers should be active
+        assert!(css.contains("#000001"));
+        assert!(css.contains("#fffffe"));
+        assert!(css.contains("600px"));
+    }
+}
