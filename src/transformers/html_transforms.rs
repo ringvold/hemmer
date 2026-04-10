@@ -6,7 +6,6 @@ pub fn process(
     html: &str,
     default_attributes: bool,
     six_digit_hex: bool,
-    remove_empty_attributes: bool,
 ) -> Result<String, Error> {
     let mut handlers = Vec::new();
 
@@ -60,26 +59,6 @@ pub fn process(
         }));
     }
 
-    if remove_empty_attributes {
-        handlers.push(element!("[style]", |el| {
-            if let Some(val) = el.get_attribute("style") {
-                if val.trim().is_empty() {
-                    el.remove_attribute("style");
-                }
-            }
-            Ok(())
-        }));
-
-        handlers.push(element!("[class]", |el| {
-            if let Some(val) = el.get_attribute("class") {
-                if val.trim().is_empty() {
-                    el.remove_attribute("class");
-                }
-            }
-            Ok(())
-        }));
-    }
-
     rewrite_str(
         html,
         RewriteStrSettings {
@@ -121,7 +100,7 @@ mod tests {
     #[test]
     fn test_default_table_attributes() {
         let html = "<table><tr><td>Hello</td></tr></table>";
-        let result = process(html, true, false, false).unwrap();
+        let result = process(html, true, false).unwrap();
         assert!(result.contains("cellpadding=\"0\""));
         assert!(result.contains("cellspacing=\"0\""));
         assert!(result.contains("role=\"none\""));
@@ -130,22 +109,14 @@ mod tests {
     #[test]
     fn test_img_alt() {
         let html = r#"<img src="logo.png">"#;
-        let result = process(html, true, false, false).unwrap();
+        let result = process(html, true, false).unwrap();
         assert!(result.contains("alt=\"\""));
     }
 
     #[test]
     fn test_six_digit_hex() {
         let html = "<td bgcolor=\"#fff\">Hi</td>";
-        let result = process(html, false, true, false).unwrap();
+        let result = process(html, false, true).unwrap();
         assert!(result.contains("bgcolor=\"#ffffff\""));
-    }
-
-    #[test]
-    fn test_remove_empty_attributes() {
-        let html = r#"<div style="" class="">Content</div>"#;
-        let result = process(html, false, false, true).unwrap();
-        assert!(!result.contains("style="));
-        assert!(!result.contains("class="));
     }
 }

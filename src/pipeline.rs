@@ -29,6 +29,7 @@ pub struct Pipeline {
     tailwind: Option<encre_css::Config>,
     outlook_tags: bool,
     safe_class_names: bool,
+    attribute_to_style: Vec<String>,
     inline_css: Option<transformers::inline_css::InlineCssConfig>,
     resolve_props: bool,
     resolve_calc: bool,
@@ -38,10 +39,11 @@ pub struct Pipeline {
     six_digit_hex: bool,
     prevent_widows: bool,
     class_cleanup: bool,
+    purge_css: bool,
     base_url: Option<String>,
     url_params: Vec<(String, String)>,
     meta_tags: bool,
-    remove_empty_attributes: bool,
+    remove_attributes: Vec<transformers::remove_attributes::RemoveRule>,
     minify: bool,
 }
 
@@ -51,6 +53,7 @@ impl Default for Pipeline {
             tailwind: None,
             outlook_tags: true,
             safe_class_names: true,
+            attribute_to_style: Vec::new(),
             inline_css: Some(transformers::inline_css::InlineCssConfig::default()),
             resolve_props: true,
             resolve_calc: true,
@@ -60,10 +63,11 @@ impl Default for Pipeline {
             six_digit_hex: true,
             prevent_widows: true,
             class_cleanup: true,
+            purge_css: false,
             base_url: None,
             url_params: Vec::new(),
             meta_tags: true,
-            remove_empty_attributes: true,
+            remove_attributes: transformers::remove_attributes::default_rules(),
             minify: false,
         }
     }
@@ -91,6 +95,7 @@ impl Pipeline {
             tailwind: None,
             outlook_tags: false,
             safe_class_names: false,
+            attribute_to_style: Vec::new(),
             inline_css: None,
             resolve_props: false,
             resolve_calc: false,
@@ -100,10 +105,11 @@ impl Pipeline {
             six_digit_hex: false,
             prevent_widows: false,
             class_cleanup: false,
+            purge_css: false,
             base_url: None,
             url_params: Vec::new(),
             meta_tags: false,
-            remove_empty_attributes: false,
+            remove_attributes: Vec::new(),
             minify: false,
         }
     }
@@ -125,6 +131,14 @@ impl Pipeline {
 
     pub fn safe_class_names(mut self, enabled: bool) -> Self {
         self.safe_class_names = enabled;
+        self
+    }
+
+    /// Enable attribute_to_style for the given HTML attributes.
+    /// Each named attribute will be duplicated into the inline `style` attribute.
+    /// Pass an empty list to disable.
+    pub fn attribute_to_style(mut self, attributes: Vec<String>) -> Self {
+        self.attribute_to_style = attributes;
         self
     }
 
@@ -178,6 +192,14 @@ impl Pipeline {
         self
     }
 
+    /// Enable purging of unused CSS rules from `<style>` blocks.
+    /// Off by default because the Tailwind generator already produces
+    /// only the used CSS — enable when working with hand-written stylesheets.
+    pub fn purge_css(mut self, enabled: bool) -> Self {
+        self.purge_css = enabled;
+        self
+    }
+
     pub fn base_url(mut self, url: impl Into<String>) -> Self {
         self.base_url = Some(url.into());
         self
@@ -193,8 +215,22 @@ impl Pipeline {
         self
     }
 
-    pub fn remove_empty_attributes(mut self, enabled: bool) -> Self {
-        self.remove_empty_attributes = enabled;
+    /// Replace the attribute removal rules.
+    /// Default rules remove empty `style` and `class` attributes.
+    pub fn remove_attributes(
+        mut self,
+        rules: Vec<transformers::remove_attributes::RemoveRule>,
+    ) -> Self {
+        self.remove_attributes = rules;
+        self
+    }
+
+    /// Add an additional attribute removal rule on top of the existing ones.
+    pub fn add_remove_rule(
+        mut self,
+        rule: transformers::remove_attributes::RemoveRule,
+    ) -> Self {
+        self.remove_attributes.push(rule);
         self
     }
 
@@ -220,6 +256,17 @@ impl Pipeline {
         // 2. Safe class names — before inlining so class selectors still match
         if self.safe_class_names {
             output = transformers::safe_class_names::process(&output)?;
+        }
+
+        // 2b. Attribute → style — must run before inlining so the CSS gets
+        //     considered alongside other inline styles
+        if !self.attribute_to_style.is_empty() {
+            let attrs: Vec<&str> = self
+                .attribute_to_style
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            output = transformers::attribute_to_style::process(&output, &attrs)?;
         }
 
         // 3. CSS inlining — the core email transformation
@@ -249,12 +296,11 @@ impl Pipeline {
         }
 
         // 8-9. HTML transformations via lol_html (single pass)
-        if self.default_attributes || self.six_digit_hex || self.remove_empty_attributes {
+        if self.default_attributes || self.six_digit_hex {
             output = transformers::html_transforms::process(
                 &output,
                 self.default_attributes,
                 self.six_digit_hex,
-                self.remove_empty_attributes,
             )?;
         }
 
@@ -266,6 +312,18 @@ impl Pipeline {
         // 11. Class cleanup — remove classes that are no longer needed
         if self.class_cleanup {
             output = transformers::class_cleanup::process(&output)?;
+        }
+
+        // 11b. Purge CSS — strip rules from <style> blocks that don't match
+        //      any element. Runs after class_cleanup so the usage scan
+        //      reflects the final state of the HTML.
+        if self.purge_css {
+            output = transformers::purge_css::process(&output)?;
+        }
+
+        // 11c. Remove attributes — must run after class_cleanup so empty classes are caught
+        if !self.remove_attributes.is_empty() {
+            output = transformers::remove_attributes::process(&output, &self.remove_attributes)?;
         }
 
         // 12. Base URL — resolve relative paths

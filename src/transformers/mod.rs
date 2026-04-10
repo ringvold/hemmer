@@ -1,3 +1,4 @@
+pub mod attribute_to_style;
 pub mod base_url;
 pub mod class_cleanup;
 pub mod email_compat_css;
@@ -6,6 +7,8 @@ pub mod inline_css;
 pub mod meta_tags;
 pub mod minify;
 pub mod outlook_tags;
+pub mod purge_css;
+pub mod remove_attributes;
 pub mod resolve_calc;
 pub mod resolve_props;
 pub mod safe_class_names;
