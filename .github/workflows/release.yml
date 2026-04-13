@@ -41,6 +41,7 @@ jobs:
           target: ${{ matrix.job.target }}
           nif-version: ${{ matrix.nif }}
           use-cross: ${{ matrix.job.use-cross || false }}
+          cross-version: "from-source"
           project-dir: "native/hemmer_nif"
 
       - name: Artifact upload
