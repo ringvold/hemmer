@@ -1,3 +1,18 @@
+# Rust
 /target
+/native/hemmer_nif/target
 
+# Elixir
+/_build
+/deps
+*.beam
+
+# Mix
+/mix.lock
+
+# Compiled NIF
+/priv
+
+# IDE / local
 .claude
+.elixir_ls

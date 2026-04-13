@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust_tests:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  elixir_build:
+    name: Elixir build
+    runs-on: ubuntu-latest
+    env:
+      HEMMER_BUILD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+      - run: mix deps.get
+      - run: mix compile
+      - run: mix run -e 'Hemmer.process_tailwind("<html><head></head><body><div class=\"p-4\">Test</div></body></html>") |> elem(1) |> String.contains?("padding") |> true = _'
