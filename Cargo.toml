@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 description = "Rust-powered email HTML transformation pipeline"
 license = "MIT"
+repository = "https://github.com/ringvold/hemmer"
+keywords = ["email", "html", "css-inline", "tailwind", "maizzle"]
+categories = ["web-programming", "text-processing"]
+readme = "README.md"
 
 [dependencies]
 css-inline = "0.14"
