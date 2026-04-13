@@ -34,7 +34,6 @@ defmodule Hemmer.MixProject do
     [
       files: [
         "lib",
-        "native/hemmer_nif/.cargo",
         "native/hemmer_nif/src",
         "native/hemmer_nif/Cargo*",
         "src",
