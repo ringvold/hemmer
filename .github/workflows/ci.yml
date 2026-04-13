@@ -29,4 +29,4 @@ jobs:
           elixir-version: "1.18"
       - run: mix deps.get
       - run: mix compile
-      - run: mix run -e 'Hemmer.process_tailwind("<html><head></head><body><div class=\"p-4\">Test</div></body></html>") |> elem(1) |> String.contains?("padding") |> true = _'
+      - run: mix run -e 'true = Hemmer.process_tailwind("<html><head></head><body><div class=\"p-4\">Test</div></body></html>") |> elem(1) |> String.contains?("padding")'
