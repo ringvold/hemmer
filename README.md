@@ -35,8 +35,8 @@ HTML and gives it a clean edge for the limitations of email clients.
 ## What it does
 
 `hemmer` runs a pipeline of independent transformers. Most are enabled by
-default; a few are opt-in. They're applied in a fixed order optimized for
-email output.
+default; a few are opt-in. Enabled transformers run in a fixed, email-optimized
+order.
 
 ### CSS generation and inlining
 
@@ -147,46 +147,34 @@ The full builder API lets you toggle every transformer individually. See
 
 ## Using from Elixir
 
-`hemmer` is designed to be wrapped as a
-[Rustler](https://github.com/rusterlium/rustler) NIF for Elixir
-applications. There's no first-party Elixir package yet — wire it up in your
-project's `native/` directory with a thin Rust wrapper:
-
-```toml
-# native/email_nif/Cargo.toml
-[package]
-name = "email_nif"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-crate-type = ["cdylib"]
-
-[dependencies]
-rustler = "0.36"
-hemmer = "0.1"  # or path = "..." for local development
-```
-
-```rust
-// native/email_nif/src/lib.rs
-#[rustler::nif(schedule = "DirtyCpu")]
-fn process(html: &str) -> Result<String, String> {
-    hemmer::Pipeline::with_tailwind()
-        .process(html)
-        .map(|r| r.html)
-        .map_err(|e| e.to_string())
-}
-
-rustler::init!("Elixir.YourApp.EmailTransformer");
-```
+`hemmer` is available on Hex as [`:hemmer`](https://hex.pm/packages/hemmer):
 
 ```elixir
-# lib/your_app/email_transformer.ex
-defmodule YourApp.EmailTransformer do
-  use Rustler, otp_app: :your_app, crate: "email_nif"
-
-  def process(_html), do: :erlang.nif_error(:nif_not_loaded)
+defp deps do
+  [
+    {:hemmer, "~> 0.1"}
+  ]
 end
+```
+
+Then use it directly from Elixir:
+
+```elixir
+html = """
+<html><head></head><body>
+  <table>
+    <tr>
+      <td class="p-6 bg-indigo-600 text-white text-center">
+        <h1 class="text-xl font-bold">Welcome!</h1>
+      </td>
+    </tr>
+  </table>
+</body></html>
+"""
+
+{:ok, result} = Hemmer.process_tailwind(html)
+# Or, for HTML that already includes CSS:
+{:ok, result} = Hemmer.process(html)
 ```
 
 ## Inspired by
